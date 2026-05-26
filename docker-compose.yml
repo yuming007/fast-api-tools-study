@@ -1,0 +1,239 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: study-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: crawler
+      MYSQL_USER: study
+      MYSQL_PASSWORD: study
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: study-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: study-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: study
+      RABBITMQ_DEFAULT_PASS: study
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: study-clickhouse
+    environment:
+      CLICKHOUSE_DB: crawler_analytics
+      CLICKHOUSE_USER: study
+      CLICKHOUSE_PASSWORD: study
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.2
+    container_name: study-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9200 >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+
+  bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: study-bootstrap
+    env_file:
+      - .env.example
+    command: ["python", "-m", "app.bootstrap"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+
+  gateway-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: study-gateway-service
+    env_file:
+      - .env.example
+    command: ["uvicorn", "app.services.gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+  scheduler-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: study-scheduler-service
+    env_file:
+      - .env.example
+    command: ["uvicorn", "app.services.scheduler.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+  worker-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: study-worker-service
+    env_file:
+      - .env.example
+    command: ["uvicorn", "app.services.worker.main:app", "--host", "0.0.0.0", "--port", "8002"]
+    ports:
+      - "8002:8002"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: study-celery-worker
+    env_file:
+      - .env.example
+    command:
+      [
+        "sh",
+        "-c",
+        "celery -A app.common.celery_app:celery_app worker --loglevel=INFO --concurrency=${CELERY_WORKER_CONCURRENCY:-4}",
+      ]
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: study-celery-beat
+    env_file:
+      - .env.example
+    command:
+      [
+        "celery",
+        "-A",
+        "app.common.celery_app:celery_app",
+        "beat",
+        "--loglevel=INFO",
+      ]
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: study-flower
+    env_file:
+      - .env.example
+    command:
+      [
+        "celery",
+        "-A",
+        "app.common.celery_app:celery_app",
+        "flower",
+        "--port=5555",
+      ]
+    ports:
+      - "5555:5555"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+  search-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: study-search-service
+    env_file:
+      - .env.example
+    command: ["uvicorn", "app.services.search.main:app", "--host", "0.0.0.0", "--port", "8003"]
+    ports:
+      - "8003:8003"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+  mock-source:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: study-mock-source
+    env_file:
+      - .env.example
+    command: ["uvicorn", "app.services.mock_source.main:app", "--host", "0.0.0.0", "--port", "8004"]
+    ports:
+      - "8004:8004"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+volumes:
+  mysql_data:
+  redis_data:
+  rabbitmq_data:
+  clickhouse_data:
+  elasticsearch_data:

@@ -1,0 +1,6 @@
+cluster.name: fast-api-tools-study
+node.name: study-es-node
+discovery.type: single-node
+xpack.security.enabled: false
+network.host: 0.0.0.0
+http.port: 9200

@@ -1,0 +1,74 @@
+services:
+  mysql:
+    build:
+      context: ./infra/mysql
+      dockerfile: Dockerfile
+    container_name: study-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: crawler
+      MYSQL_USER: study
+      MYSQL_PASSWORD: study
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  redis:
+    build:
+      context: ./infra/redis
+      dockerfile: Dockerfile
+    container_name: study-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  rabbitmq:
+    build:
+      context: ./infra/rabbitmq
+      dockerfile: Dockerfile
+    container_name: study-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: study
+      RABBITMQ_DEFAULT_PASS: study
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  clickhouse:
+    build:
+      context: ./infra/clickhouse
+      dockerfile: Dockerfile
+    container_name: study-clickhouse
+    environment:
+      CLICKHOUSE_DB: crawler_analytics
+      CLICKHOUSE_USER: study
+      CLICKHOUSE_PASSWORD: study
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+
+  elasticsearch:
+    build:
+      context: ./infra/elasticsearch
+      dockerfile: Dockerfile
+    container_name: study-elasticsearch
+    environment:
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
+volumes:
+  mysql_data:
+  redis_data:
+  rabbitmq_data:
+  clickhouse_data:
+  elasticsearch_data:
